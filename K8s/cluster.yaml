@@ -1,0 +1,26 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: streaming-cluster
+  region: ap-northeast-2
+
+iam:
+  withOIDC: true   # Spark Operator / Kafka IRSA 필수
+
+managedNodeGroups:
+  - name: ng-main
+    instanceType: m6i.large
+    desiredCapacity: 3
+    minSize: 3
+    maxSize: 3
+
+    volumeSize: 50   # Kafka / Spark 로그 여유
+    volumeType: gp3
+
+    labels:
+      workload: streaming
+
+    tags:
+      nodegroup-role: streaming
+
