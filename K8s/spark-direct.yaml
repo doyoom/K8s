@@ -17,10 +17,23 @@ spec:
       - "--master"
       - "local[*]"
       - "--packages"
-      - "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1"
+      - "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.apache.hadoop:hadoop-aws:3.3.4,org.apache.hadoop:hadoop-common:3.3.4"
       - "--conf"
       - "spark.driver.extraJavaOptions=-Divy.cache.dir=/tmp -Divy.home=/tmp"
-      - "/opt/spark/app/user_activity_streaming.py"
+      - "--conf"
+      - "spark.hadoop.fs.s3a.endpoint=http://minio.storage.svc.cluster.local:9000"
+      - "--conf"
+      - "spark.hadoop.fs.s3a.access.key=admin"
+      - "--conf"
+      - "spark.hadoop.fs.s3a.secret.key=password1234"
+      - "--conf"
+      - "spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem"
+      - "--conf"
+      - "spark.hadoop.fs.s3a.path.style.access=true"
+      - "/opt/spark/code/user_activity_streaming.py"
+    volumeMounts:
+      - name: spark-code
+        mountPath: /opt/spark/code
     resources:
       requests:
         memory: "1Gi"
@@ -28,4 +41,8 @@ spec:
       limits:
         memory: "2Gi"
         cpu: "1000m"
+  volumes:
+    - name: spark-code
+      configMap:
+        name: spark-app-code
   restartPolicy: OnFailure

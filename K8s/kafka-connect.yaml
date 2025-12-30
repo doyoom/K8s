@@ -1,0 +1,31 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaConnect
+metadata:
+  name: streaming-connect-cluster
+  namespace: kafka
+  annotations:
+    strimzi.io/use-connector-resources: "true"
+spec:
+  replicas: 2
+  version: 4.0.0
+  bootstrapServers: streaming-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092
+  config:
+    group.id: connect-cluster
+    offset.storage.topic: connect-offsets
+    config.storage.topic: connect-configs
+    status.storage.topic: connect-status
+    offset.storage.replication.factor: 3
+    config.storage.replication.factor: 3
+    status.storage.replication.factor: 3
+    # HDFS Sink Connector를 위한 설정
+    plugin.path: /opt/kafka/plugins
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+  # HDFS Connector 플러그인을 포함한 커스텀 이미지 사용 시
+  # image: your-registry/kafka-connect-hdfs:latest
+

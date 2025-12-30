@@ -13,19 +13,15 @@ spec:
 
   mainApplicationFile: "local:///opt/spark/app/user_activity_streaming.py"
 
-<<<<<<< Updated upstream
   sparkConf:
     "spark.kubernetes.container.image.pullPolicy": "Always"
-    spark.kubernetes.driver.podTemplateFile: ""
-    spark.kubernetes.executor.podTemplateFile: ""
-=======
+
   restartPolicy:
     type: OnFailure
     onFailureRetries: 3
     onFailureRetryInterval: 10
     onSubmissionFailureRetries: 3
     onSubmissionFailureRetryInterval: 10
->>>>>>> Stashed changes
 
   driver:
     cores: 1
@@ -33,12 +29,9 @@ spec:
     serviceAccount: spark
     labels:
       version: "3.3.1"
-<<<<<<< Updated upstream
-=======
     env:
       - name: KAFKA_BOOTSTRAP_SERVERS
         value: "streaming-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"
->>>>>>> Stashed changes
 
   executor:
     cores: 1
@@ -46,10 +39,6 @@ spec:
     instances: 2
     labels:
       version: "3.3.1"
-<<<<<<< Updated upstream
-
-=======
     env:
       - name: KAFKA_BOOTSTRAP_SERVERS
         value: "streaming-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"
->>>>>>> Stashed changes

@@ -1,0 +1,6 @@
+# Documentation files (excluded from git)
+*.md
+
+# Keep specific important files if needed
+# !README.md
+

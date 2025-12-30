@@ -20,5 +20,39 @@ spec:
         ports:
         - containerPort: 8080
         env:
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          value: streaming-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092
         - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
-          value: streaming-cluster-kafka-bootstrap.kafka.svc:9092
+          value: streaming-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092
+
+
+
+
+
+# apiVersion: apps/v1
+# kind: Deployment
+# metadata:
+#   name: was-deployment
+#   namespace: was
+# spec:
+#   replicas: 2
+#   selector:
+#     matchLabels:
+#       app: was
+#   template:
+#     metadata:
+#       labels:
+#         app: was
+#     spec:
+#       containers:
+#         - name: was
+#           image: ji0513ji/log-generator:1.1.2
+#           imagePullPolicy: Always
+#           ports:
+#             - containerPort: 8080
+#           env:
+#             - name: KAFKA_BOOTSTRAP_SERVERS
+#               value: streaming-cluster-kafka-bootstrap.kafka.svc:9092
+#             - name: SPRING_KAFKA_BOOTSTRAP_SERVERS
+#               value: streaming-cluster-kafka-bootstrap.kafka.svc:9092
+

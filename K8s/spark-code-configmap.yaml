@@ -5,31 +5,61 @@ metadata:
   namespace: default
 data:
   user_activity_streaming.py: |
-    # 여기에 스파크 스트리밍 코드 붙여넣기
-    # 예: Kafka에서 topic consume → 처리 → 로그 출력
     from pyspark.sql import SparkSession
     from pyspark.sql.functions import from_json, col
-    from pyspark.sql.types import StructType, StringType
+    from pyspark.sql.types import StructType, StructField, StringType, LongType
 
     spark = (
         SparkSession.builder
-        .appName("KafkaConsumer")
+        .appName("KafkaToMinIO_JSON")
         .getOrCreate()
     )
 
-    df = (
-        spark.readStream
-            .format("kafka")
-            .option("kafka.bootstrap.servers", "kafka.logging-system.svc.cluster.local:9092")
-            .option("subscribe", "delivery_log")
-            .load()
+    hadoop_conf = spark._jsc.hadoopConfiguration()
+    hadoop_conf.set("fs.s3a.endpoint", "http://minio.storage.svc.cluster.local:9000")
+    hadoop_conf.set("fs.s3a.access.key", "admin")
+    hadoop_conf.set("fs.s3a.secret.key", "password1234")
+    hadoop_conf.set("fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
+    hadoop_conf.set("fs.s3a.path.style.access", "true")
+
+    hadoop_conf.setInt("fs.s3a.connection.timeout", 60000)
+    hadoop_conf.setInt("fs.s3a.connection.establish.timeout", 60000)
+    hadoop_conf.setInt("fs.s3a.attempts.maximum", 10)
+
+    spark.sparkContext.setLogLevel("WARN")
+
+    df = spark.readStream \
+        .format("kafka") \
+        .option("kafka.bootstrap.servers", "streaming-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092") \
+        .option("subscribe", "user-activity-logs") \
+        .option("startingOffsets", "latest") \
+        .load()
+
+    json_df = df.selectExpr("CAST(value AS STRING) as json_value")
+
+    log_schema = StructType([
+            StructField("eventType", StringType()),
+            StructField("endpoint", StringType()),
+            StructField("actionType", StringType()),
+            StructField("userId", LongType()),
+            StructField("message", StringType()),
+            StructField("timestamp", StringType()),
+            StructField("metadata", StringType()),
+        ])
+
+    parsed_df = (
+        df.selectExpr("CAST(value AS STRING) as json")
+          .select(from_json("json", log_schema).alias("data"))
+          .select("data.*")
     )
 
     query = (
-        df.writeStream
-            .format("console")
-            .option("truncate", False)
-            .start()
+        parsed_df.writeStream
+        .format("json")
+        .option("path", "s3a://mybucket/output-json/")
+        .option("checkpointLocation", "/tmp/spark-checkpoint-minio")
+        .outputMode("append")
+        .start()
     )
 
     query.awaitTermination()
