@@ -1,6 +1,6 @@
 # Kubernetes Deployment for Streaming Data Pipeline
 
-이 프로젝트는 Amazon EKS(Elastic Kubernetes Service) 클러스터에 실시간 데이터 스트리밍 파이프라인을 배포하기 위한 Kubernetes 매니페스트 파일들을 포함합니다.
+이 프로젝트는 Amazon EKS(Elastic Kubernetes Service) 클러스터에 실시간 데이터 스트리밍 pipeline을 배포하기 위한 Kubernetes manifest 파일들을 포함합니다.
 
 ## Architecture Overview
 
@@ -23,7 +23,9 @@ Spark Streaming Application  Monitoring Stack
 2. **Kafka Cluster**: 메시지 브로커로 실시간 데이터 스트리밍 허브 역할
 3. **Spark Application**: Kafka에서 데이터를 소비하여 실시간 처리
 
-## CI/CD
+## CI/CD (Added in this fork)
+
+이 포크는 Spark Streaming 애플리케이션의 검증과 배포를 자동화하는 **GitHub Actions 기반의 CI / CT / CD pipeline**을 도입합니다.
 
 ```
 Developer push (main)
@@ -43,78 +45,197 @@ CD: push image (GHCR)
 CD: Kubernetes rolling deployment + rollout wait
 ```
 
-- **Trigger**: `main` 브랜치에 push 시 자동 실행
+- **Trigger**: `main` branch push 시 자동 실행
 - **Workflow file**: `.github/workflows/ci-cd.yml`
 
-### CI / CT / CD
+이 pipeline은 코드 품질, 컨테이너 유효성, Kubernetes 배포를 새 버전 릴리즈 전에 자동으로 검증합니다.
 
-- **CI (Continuous Integration)**: 린트/유닛테스트/커버리지로 “메인에 들어갈 품질”을 자동 판정
-  - `ruff check spark_app tests`
-  - `pytest + pytest-cov`로 커버리지 출력/아티팩트 업로드, 임계치 미달 시 실패(배포 차단)
-- **CT (Continuous Testing)**: 배포 전에 “컨테이너가 최소한으로 실행 가능한지” 스모크 테스트
-  - 빌드된 이미지를 `docker run`으로 실행하여 `spark-submit --version` 성공 여부 확인
-- **CD (Continuous Deployment)**: 검증된 이미지(커밋 SHA 태그)를 GHCR에 푸시하고 K8s에 롤링 배포
-  - `kubectl rollout status`로 롤아웃 완료까지 대기(배포 완료를 파이프라인에서 보장)
+---
 
-### Manual → Automated
+## CI / CT / CD Stages
 
-Manual deployment steps
-1. Run tests locally
-2. Build Docker image
-3. Tag Docker image
-4. Push image to registry
-5. Apply Kubernetes manifest
-6. Wait for rollout status
+### CI (Continuous Integration)
 
-Automated CI/CD pipeline
-1. Developer pushes code
-2. GitHub Actions runs lint, tests, coverage
-3. Docker image built automatically
-4. Image pushed to GHCR
-5. Kubernetes rolling deployment triggered
-6. Pipeline waits for rollout completion
+검증된 코드만 main 브랜치에 반영되도록 보장합니다.
 
-### Docker image build/push
+실행 작업:
 
-- 빌드 컨텍스트: 레포 루트의 `Dockerfile`
-- 태그 정책:
-  - `ghcr.io/<owner>/<repo>/spark-streaming:<git-sha>`
-  - `ghcr.io/<owner>/<repo>/spark-streaming:latest`
+- `ruff check spark_app tests`
+- `pytest` unit tests
+- `pytest-cov` coverage measurement
 
-### Kubernetes rolling updates
+coverage 결과는 CI artifact로 업로드되며, 설정된 임계값 미만일 경우 pipeline이 실패합니다.
 
-- 매니페스트: `K8s/spark-streaming-deployment.yaml`
-- 전략: `RollingUpdate` (`maxUnavailable: 0`, `maxSurge: 1`)
-- 파이프라인은 `${IMAGE}`를 주입해 **새 이미지로 업데이트**하고, 완료될 때까지 기다립니다.
+---
 
-### Required GitHub Secrets
+### CT (Continuous Testing)
 
-- **`KUBE_CONFIG_DATA`**: kubeconfig를 base64로 인코딩한 값 (GitHub Actions에서 `kubectl` 인증에 사용)
+배포 전, 빌드된 컨테이너 이미지가 실제로 실행 가능한지 검증합니다.
 
+Container smoke test:
+
+```bash
+docker run <image> spark-submit --version
+```
+
+빌드는 성공했지만 실행에 실패하는 이미지가 배포되는 것을 방지합니다.
+
+---
+
+### CD (Continuous Deployment)
+ 
+모든 검증 단계를 통과하면 자동 배포를 수행합니다.
+ 
+Steps:
+
+1. **GitHub Container Registry (GHCR)** 에 Docker 이미지 push
+2. Kubernetes deployment manifest에 새 이미지 태그 반영
+3. Kubernetes cluster에 manifest 적용
+4. 아래 명령으로 rollout 완료 여부 확인:
+ 
+```bash
+kubectl rollout status
+```
+ 
+Deployment 전략:
+ 
+```yaml
+RollingUpdate
+maxUnavailable: 0
+maxSurge: 1
+```
+ 
+이를 통해 무중단에 가까운 배포(near zero-downtime)를 보장합니다.
+ 
+---
+
+## Manual → Automated Deployment
+
+**Before CI/CD:**
+ 
+1. 로컬에서 테스트 실행
+2. Docker 이미지 빌드
+3. Docker 이미지 태깅
+4. 레지스트리에 이미지 push
+5. Kubernetes manifest 적용
+6. rollout 상태 대기
+ 
+**After CI/CD:**
+ 
+1. 개발자가 코드 push
+2. GitHub Actions가 테스트, 린트, coverage 검사 자동 실행
+3. Docker 이미지 자동 빌드
+4. GHCR에 이미지 자동 push
+5. Kubernetes rolling deployment 자동 트리거
+6. pipeline이 rollout 완료를 대기 및 확인
+ 
+개발자의 수동 작업은 아래 한 단계로 줄었습니다.
+ 
+```bash
+git push
+```
+ 
+---
+ 
+## Docker Image Build and Push
+
+Docker 이미지는 repository root의 `Dockerfile`을 기반으로 빌드됩니다.
+ 
+Tagging 전략:
+ 
+```
+ghcr.io/<owner>/<repo>/spark-streaming:<git-sha>
+ghcr.io/<owner>/<repo>/spark-streaming:latest
+```
+
+Git 커밋과 배포된 컨테이너 간의 추적성을 보장합니다.
+ 
+---
+ 
+## Kubernetes Rolling Updates
+ 
+Manifest 위치:
+ 
+```
+K8s/K8s/spark-streaming-deployment.yaml
+```
+ 
+Deployment 전략:
+ 
+```yaml
+RollingUpdate
+maxUnavailable: 0
+maxSurge: 1
+```
+ 
+pipeline이 새 이미지 태그를 주입하고 rollout 완료를 대기하여 배포 안정성을 보장합니다.
+ 
+---
+ 
+## Deployment Verification
+
+Deployment manifest는 local Kubernetes cluster(`docker-desktop`)에서도 추가 검증되었습니다.
+ 
+사용 명령어:
+ 
+```bash
+kubectl apply -f K8s/K8s/spark-streaming-deployment.yaml
+kubectl rollout status deployment/spark-streaming --timeout=300s
+kubectl get pods -l app=spark-streaming
+```
+ 
+이를 통해 배포 manifest가 올바르게 동작하고 Kubernetes 환경에서 애플리케이션이 정상 기동됨을 확인했습니다.
+
+---
+ 
+## Required GitHub Secrets
+ 
+| Secret | Description |
+|--------|-------------|
+| `KUBE_CONFIG_DATA` | Base64 encoded kubeconfig used by GitHub Actions to authenticate with the Kubernetes cluster |
+ 
+---
+ 
 ## Automation Impact
-
-- **배포 소요 시간(전/후)**: 코드 변경 → 배포 완료까지 걸린 시간(분)
-- **수동 단계 제거 개수**: 로컬 테스트/린트/도커 빌드/푸시/`kubectl apply`/롤아웃 확인 등 체크리스트 단계 수
-- **실패 처리**: 테스트 실패 또는 커버리지 미달 시 **이미지 푸시/배포가 진행되지 않음**(차단 효과)
-- **검증 강화**: 도커 빌드 실패 시 파이프라인 즉시 실패, K8s 롤아웃 완료까지 대기하여 “배포 끝났는지”를 자동 판정
-
+ 
+최근 검증된 pipeline 실행 결과:
+ 
+| Metric | Value |
+|--------|-------|
+| Total pipeline runtime | 2m 43s |
+| Successful jobs | 6 (CI 3 / CT 1 / CD 2) |
+| Line coverage | 95.24% (20 / 21 lines covered) | 
+| Manual deployment steps | 6 |
+| Developer interaction | `git push` |
+ 
+**Operational improvements:**
+ 
+- 테스트 실패 또는 coverage 미달 시 deployment 자동 차단
+- Container smoke 테스트로 실행 불가 이미지 배포 방지
+- Kubernetes rollout 완료 검증 후 pipeline 성공 처리
+ 
+---
+ 
 ## Prerequisites
-
-- Amazon EKS 클러스터 (eksctl로 생성)
-- kubectl 설치 및 클러스터 접근 권한
-- Strimzi Kafka Operator 설치
-- Spark Operator 설치
-
+ 
+- Amazon EKS cluster (created using `eksctl`)
+- `kubectl` installed with cluster access
+- Strimzi Kafka Operator
+- Spark Operator
+ 
+---
+ 
 ## Namespace Structure
+ 
+| Namespace | Description |
+|-----------|-------------|
+| `kafka` | Kafka cluster and related components |
+| `was` | Web Application Server |
+| `logging-system` | Log generator |
+| `default` | Spark application resources |
+| `spark-operator` | Spark operator |
+| `monitoring` | Prometheus, Grafana, Kafka exporter |
 
-시스템은 다음 네임스페이스로 구성됩니다:
-
-- `kafka`: Kafka 클러스터 및 관련 리소스 (Kafka Connect 포함)
-- `was`: Web Application Server
-- `logging-system`: Log Generator
-- `default`: Spark Application 및 관련 리소스
-- `spark-operator`: Spark Operator
-- `monitoring`: 모니터링 스택 (Prometheus, Grafana, Kafka Exporter)
 
 ## Deployment Components
 
@@ -582,7 +703,7 @@ kubectl port-forward -n monitoring svc/prometheus 9090:9090
 
 ### 업데이트 절차
 
-1. 매니페스트 파일 수정
+1. manifest 파일 수정
 2. `kubectl apply -f <file>` 명령으로 변경사항 적용
 3. Deployment의 경우 자동으로 롤링 업데이트 수행
 4. SparkApplication의 경우 삭제 후 재생성 필요
@@ -642,7 +763,4 @@ kubectl logs <pod-name> -n <namespace> --tail=100
 - [Strimzi Kafka Operator Documentation](https://strimzi.io/)
 - [Spark on Kubernetes Operator](https://github.com/GoogleCloudPlatform/spark-on-k8s-operator)
 - [Amazon EKS Documentation](https://docs.aws.amazon.com/eks/)
-
-## License
-
-이 프로젝트는 내부 사용을 위한 것입니다.
+- [GitHub Actions Documentation](https://docs.github.com/en/actions)
