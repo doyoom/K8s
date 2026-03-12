@@ -1,0 +1,206 @@
+name: ci-cd
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  REGISTRY: ghcr.io
+  IMAGE_NAME: spark-streaming
+  COVERAGE_MIN: "70"
+  IMAGE_REPO: ${{ github.repository_owner }}/k8s
+
+jobs:
+  # CI
+  lint:
+    name: "CI: Lint (ruff)"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install ruff
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+
+      - name: Run ruff
+        run: |
+          ruff --version
+          ruff check spark_app tests
+
+  unit_test_coverage:
+    name: "CI: Unit tests + Coverage gate (pytest-cov)"
+    runs-on: ubuntu-latest
+    needs: [lint]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest coverage pytest-cov
+
+      - name: Run unit tests with coverage (fail under threshold)
+        run: |
+          pytest -q \
+            --cov=spark_app.parsing \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml \
+            --cov-fail-under=${{ env.COVERAGE_MIN }}
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+
+  docker_build:
+    name: "CI: Docker build (no push)"
+    runs-on: ubuntu-latest
+    needs: [unit_test_coverage]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (export as tar for CT)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          outputs: type=docker,dest=/tmp/image.tar
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: spark-streaming-image
+          path: /tmp/image.tar
+
+  # CT
+  ct_smoke_container:
+    name: "CT: Container smoke test (starts + spark-submit)"
+    runs-on: ubuntu-latest
+    needs: [docker_build]
+    steps:
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: spark-streaming-image
+          path: /tmp
+
+      - name: Load image
+        run: |
+          docker load --input /tmp/image.tar
+
+      - name: Smoke test (spark-submit --version)
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        run: |
+          timeout 60s docker run --rm "$IMAGE" /opt/spark/bin/spark-submit --version
+
+  # CD
+  push_image:
+    name: "CD: Push image to GHCR"
+    runs-on: ubuntu-latest
+    needs: [ct_smoke_container]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image (SHA + latest)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}/${{ env.IMAGE_NAME }}:latest
+
+  deploy_kubernetes:
+    name: "CD: Deploy to Kubernetes (rolling update + wait)"
+    runs-on: ubuntu-latest
+    needs: [push_image]
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check deploy credentials
+        id: kube
+        env:
+          KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_DATA }}
+        run: |
+          if [ -n "$KUBE_CONFIG_DATA" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up kubectl
+        if: ${{ steps.kube.outputs.enabled == 'true' }}
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.29.0
+
+      - name: Configure kubeconfig
+        if: ${{ steps.kube.outputs.enabled == 'true' }}
+        env:
+          KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_DATA }}
+        run: |
+          mkdir -p "$HOME/.kube"
+          echo "$KUBE_CONFIG_DATA" | base64 --decode > "$HOME/.kube/config"
+          chmod 600 "$HOME/.kube/config"
+
+      - name: Apply manifests (image injected) + wait rollout
+        if: ${{ steps.kube.outputs.enabled == 'true' }}
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y gettext-base
+          export IMAGE
+          envsubst < K8s/spark-streaming-deployment.yaml | kubectl apply -f -
+          kubectl rollout status deployment/spark-streaming --timeout=300s
+
+      - name: Skip deploy (missing KUBE_CONFIG_DATA)
+        if: ${{ steps.kube.outputs.enabled != 'true' }}
+        run: |
+          echo "KUBE_CONFIG_DATA is not set. Skipping Kubernetes deploy."
+

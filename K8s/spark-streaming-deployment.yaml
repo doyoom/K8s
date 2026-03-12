@@ -1,0 +1,137 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-streaming
+  namespace: default
+  labels:
+    app: spark-streaming
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: spark-streaming
+  template:
+    metadata:
+      labels:
+        app: spark-streaming
+    spec:
+      containers:
+        - name: spark
+          image: ${IMAGE}
+          imagePullPolicy: Always
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "streaming-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"
+            - name: KAFKA_TOPIC
+              value: "user-activity-logs"
+            - name: MINIO_ENDPOINT
+              value: "http://minio.storage.svc.cluster.local:9000"
+            - name: MINIO_ACCESS_KEY
+              value: "admin"
+            - name: MINIO_SECRET_KEY
+              value: "password1234"
+            - name: SILVER_PATH
+              value: "s3a://mybucket/silver/user-activity-v2"
+            - name: CHECKPOINT_PATH
+              value: "/tmp/checkpoints/user-activity"
+          command: ["/opt/spark/bin/spark-submit"]
+          args:
+            - "--master"
+            - "local[*]"
+            - "--packages"
+            - "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.apache.hadoop:hadoop-aws:3.3.4,org.apache.hadoop:hadoop-common:3.3.4"
+            - "--conf"
+            - "spark.driver.extraJavaOptions=-Divy.cache.dir=/tmp -Divy.home=/tmp"
+            - "--conf"
+            - "spark.hadoop.fs.s3a.endpoint=http://minio.storage.svc.cluster.local:9000"
+            - "--conf"
+            - "spark.hadoop.fs.s3a.access.key=admin"
+            - "--conf"
+            - "spark.hadoop.fs.s3a.secret.key=password1234"
+            - "--conf"
+            - "spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem"
+            - "--conf"
+            - "spark.hadoop.fs.s3a.path.style.access=true"
+            - "/opt/spark/code/user_activity_streaming.py"
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "200m"
+            limits:
+              memory: "2Gi"
+              cpu: "500m"
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: spark-streaming
+  namespace: default
+  labels:
+    app: spark-streaming
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: spark-streaming
+  template:
+    metadata:
+      labels:
+        app: spark-streaming
+    spec:
+      containers:
+        - name: spark
+          # GitHub Actions CD 단계에서 IMAGE를 주입합니다.
+          image: ${IMAGE}
+          imagePullPolicy: Always
+          env:
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "streaming-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"
+            - name: KAFKA_TOPIC
+              value: "user-activity-logs"
+            - name: MINIO_ENDPOINT
+              value: "http://minio.storage.svc.cluster.local:9000"
+            - name: MINIO_ACCESS_KEY
+              value: "admin"
+            - name: MINIO_SECRET_KEY
+              value: "password1234"
+            - name: SILVER_PATH
+              value: "s3a://mybucket/silver/user-activity-v2"
+            - name: CHECKPOINT_PATH
+              value: "/tmp/checkpoints/user-activity"
+          command: ["/opt/spark/bin/spark-submit"]
+          args:
+            - "--master"
+            - "local[*]"
+            - "--packages"
+            - "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.apache.hadoop:hadoop-aws:3.3.4,org.apache.hadoop:hadoop-common:3.3.4"
+            - "--conf"
+            - "spark.driver.extraJavaOptions=-Divy.cache.dir=/tmp -Divy.home=/tmp"
+            - "--conf"
+            - "spark.hadoop.fs.s3a.endpoint=http://minio.storage.svc.cluster.local:9000"
+            - "--conf"
+            - "spark.hadoop.fs.s3a.access.key=admin"
+            - "--conf"
+            - "spark.hadoop.fs.s3a.secret.key=password1234"
+            - "--conf"
+            - "spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem"
+            - "--conf"
+            - "spark.hadoop.fs.s3a.path.style.access=true"
+            - "/opt/spark/code/user_activity_streaming.py"
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "200m"
+            limits:
+              memory: "2Gi"
+              cpu: "500m"

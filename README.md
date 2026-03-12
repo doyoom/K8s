@@ -23,6 +23,81 @@ Spark Streaming Application  Monitoring Stack
 2. **Kafka Cluster**: 메시지 브로커로 실시간 데이터 스트리밍 허브 역할
 3. **Spark Application**: Kafka에서 데이터를 소비하여 실시간 처리
 
+## CI/CD
+
+```
+Developer push (main)
+  ↓
+GitHub Actions
+  ↓
+CI: ruff lint
+  ↓
+CI: pytest unit tests + coverage gate (pytest-cov)
+  ↓
+CI: docker build (no push)
+  ↓
+CT: container smoke test (spark-submit --version)
+  ↓
+CD: push image (GHCR)
+  ↓
+CD: Kubernetes rolling deployment + rollout wait
+```
+
+- **Trigger**: `main` 브랜치에 push 시 자동 실행
+- **Workflow file**: `.github/workflows/ci-cd.yml`
+
+### CI / CT / CD
+
+- **CI (Continuous Integration)**: 린트/유닛테스트/커버리지로 “메인에 들어갈 품질”을 자동 판정
+  - `ruff check spark_app tests`
+  - `pytest + pytest-cov`로 커버리지 출력/아티팩트 업로드, 임계치 미달 시 실패(배포 차단)
+- **CT (Continuous Testing)**: 배포 전에 “컨테이너가 최소한으로 실행 가능한지” 스모크 테스트
+  - 빌드된 이미지를 `docker run`으로 실행하여 `spark-submit --version` 성공 여부 확인
+- **CD (Continuous Deployment)**: 검증된 이미지(커밋 SHA 태그)를 GHCR에 푸시하고 K8s에 롤링 배포
+  - `kubectl rollout status`로 롤아웃 완료까지 대기(배포 완료를 파이프라인에서 보장)
+
+### Manual → Automated
+
+Manual deployment steps
+1. Run tests locally
+2. Build Docker image
+3. Tag Docker image
+4. Push image to registry
+5. Apply Kubernetes manifest
+6. Wait for rollout status
+
+Automated CI/CD pipeline
+1. Developer pushes code
+2. GitHub Actions runs lint, tests, coverage
+3. Docker image built automatically
+4. Image pushed to GHCR
+5. Kubernetes rolling deployment triggered
+6. Pipeline waits for rollout completion
+
+### Docker image build/push
+
+- 빌드 컨텍스트: 레포 루트의 `Dockerfile`
+- 태그 정책:
+  - `ghcr.io/<owner>/<repo>/spark-streaming:<git-sha>`
+  - `ghcr.io/<owner>/<repo>/spark-streaming:latest`
+
+### Kubernetes rolling updates
+
+- 매니페스트: `K8s/spark-streaming-deployment.yaml`
+- 전략: `RollingUpdate` (`maxUnavailable: 0`, `maxSurge: 1`)
+- 파이프라인은 `${IMAGE}`를 주입해 **새 이미지로 업데이트**하고, 완료될 때까지 기다립니다.
+
+### Required GitHub Secrets
+
+- **`KUBE_CONFIG_DATA`**: kubeconfig를 base64로 인코딩한 값 (GitHub Actions에서 `kubectl` 인증에 사용)
+
+## Automation Impact
+
+- **배포 소요 시간(전/후)**: 코드 변경 → 배포 완료까지 걸린 시간(분)
+- **수동 단계 제거 개수**: 로컬 테스트/린트/도커 빌드/푸시/`kubectl apply`/롤아웃 확인 등 체크리스트 단계 수
+- **실패 처리**: 테스트 실패 또는 커버리지 미달 시 **이미지 푸시/배포가 진행되지 않음**(차단 효과)
+- **검증 강화**: 도커 빌드 실패 시 파이프라인 즉시 실패, K8s 롤아웃 완료까지 대기하여 “배포 끝났는지”를 자동 판정
+
 ## Prerequisites
 
 - Amazon EKS 클러스터 (eksctl로 생성)
