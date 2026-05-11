@@ -67,9 +67,15 @@ spec:
               name: console
           env:
             - name: MINIO_ROOT_USER
-              value: "admin"
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: root-user
             - name: MINIO_ROOT_PASSWORD
-              value: "password1234"
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: root-password
           args:
             - server
             - /data

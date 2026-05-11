@@ -130,8 +130,14 @@ jobs:
     runs-on: ubuntu-latest
     needs: [ct_smoke_container]
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Download image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: spark-streaming-image
+          path: /tmp
+
+      - name: Load image
+        run: docker load --input /tmp/image.tar
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -140,18 +146,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push image (SHA + latest)
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}/${{ env.IMAGE_NAME }}:latest
+      - name: Tag and push (SHA + latest)
+        env:
+          SHA_TAG: ${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          LATEST_TAG: ${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}/${{ env.IMAGE_NAME }}:latest
+        run: |
+          docker tag "$SHA_TAG" "$LATEST_TAG"
+          docker push "$SHA_TAG"
+          docker push "$LATEST_TAG"
 
   deploy_kubernetes:
     name: "CD: Deploy to Kubernetes (rolling update + wait)"
@@ -192,9 +194,34 @@ jobs:
         if: ${{ steps.kube.outputs.enabled == 'true' }}
         env:
           IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          MINIO_ACCESS_KEY: ${{ secrets.MINIO_ACCESS_KEY }}
+          MINIO_SECRET_KEY: ${{ secrets.MINIO_SECRET_KEY }}
+          CLICKHOUSE_PASSWORD: ${{ secrets.CLICKHOUSE_PASSWORD }}
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+          GRAFANA_CLICKHOUSE_PASSWORD: ${{ secrets.GRAFANA_CLICKHOUSE_PASSWORD }}
         run: |
           sudo apt-get update -y
           sudo apt-get install -y gettext-base
+          kubectl create secret generic minio-credentials \
+            --from-literal=root-user="$MINIO_ACCESS_KEY" \
+            --from-literal=root-password="$MINIO_SECRET_KEY" \
+            --from-literal=access-key="$MINIO_ACCESS_KEY" \
+            --from-literal=secret-key="$MINIO_SECRET_KEY" \
+            --namespace=storage --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic minio-credentials \
+            --from-literal=access-key="$MINIO_ACCESS_KEY" \
+            --from-literal=secret-key="$MINIO_SECRET_KEY" \
+            --namespace=default --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic clickhouse-credentials \
+            --from-literal=password="$CLICKHOUSE_PASSWORD" \
+            --namespace=storage --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic clickhouse-credentials \
+            --from-literal=password="$CLICKHOUSE_PASSWORD" \
+            --namespace=default --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create secret generic grafana-credentials \
+            --from-literal=admin-password="$GRAFANA_ADMIN_PASSWORD" \
+            --from-literal=clickhouse-password="$GRAFANA_CLICKHOUSE_PASSWORD" \
+            --namespace=monitoring --dry-run=client -o yaml | kubectl apply -f -
           export IMAGE
           envsubst < K8s/spark-streaming-deployment.yaml | kubectl apply -f -
           kubectl rollout status deployment/spark-streaming --timeout=300s

@@ -21,9 +21,15 @@ spec:
     - name: MINIO_ENDPOINT
       value: "http://minio.storage.svc.cluster.local:9000"
     - name: MINIO_ACCESS_KEY
-      value: "admin"
+      valueFrom:
+        secretKeyRef:
+          name: minio-credentials
+          key: access-key
     - name: MINIO_SECRET_KEY
-      value: "password1234"
+      valueFrom:
+        secretKeyRef:
+          name: minio-credentials
+          key: secret-key
     # ClickHouse 설정
     - name: CLICKHOUSE_HOST
       value: "clickhouse.storage.svc.cluster.local"
@@ -36,7 +42,10 @@ spec:
     - name: CLICKHOUSE_USER
       value: "default"
     - name: CLICKHOUSE_PASSWORD
-      value: "backtoeng"
+      valueFrom:
+        secretKeyRef:
+          name: clickhouse-credentials
+          key: password
     # Spark 설정
     - name: SCALA_BINARY_VERSION
       value: "2.12"
@@ -55,9 +64,9 @@ spec:
       - "--conf"
       - "spark.hadoop.fs.s3a.endpoint=http://minio.storage.svc.cluster.local:9000"
       - "--conf"
-      - "spark.hadoop.fs.s3a.access.key=admin"
+      - "spark.hadoop.fs.s3a.access.key=$(MINIO_ACCESS_KEY)"
       - "--conf"
-      - "spark.hadoop.fs.s3a.secret.key=password1234"
+      - "spark.hadoop.fs.s3a.secret.key=$(MINIO_SECRET_KEY)"
       - "--conf"
       - "spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem"
       - "--conf"
@@ -73,7 +82,7 @@ spec:
       - "--conf"
       - "spark.sql.catalog.clickhouse.user=default"
       - "--conf"
-      - "spark.sql.catalog.clickhouse.password=backtoeng"
+      - "spark.sql.catalog.clickhouse.password=$(CLICKHOUSE_PASSWORD)"
       - "--conf"
       - "spark.sql.catalog.clickhouse.database=logs"
       - "/opt/spark/code/clickhouse_gold.py"

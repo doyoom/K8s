@@ -26,5 +26,5 @@ data:
           port: 8123
           username: default
         secureJsonData:
-          password: "backtoeng"
+          password: "${GF_CLICKHOUSE_PASSWORD}"
 

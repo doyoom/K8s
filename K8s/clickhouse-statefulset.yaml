@@ -86,7 +86,10 @@ spec:
         - name: CLICKHOUSE_USER
           value: "default"
         - name: CLICKHOUSE_PASSWORD
-          value: ""
+          valueFrom:
+            secretKeyRef:
+              name: clickhouse-credentials
+              key: password
         volumeMounts:
         - name: clickhouse-storage
           mountPath: /var/lib/clickhouse
