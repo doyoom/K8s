@@ -3,6 +3,7 @@
 이 프로젝트는 Amazon EKS(Elastic Kubernetes Service) 클러스터에 실시간 데이터 스트리밍 pipeline을 배포하기 위한 Kubernetes manifest 파일들을 포함합니다.
 
 ## Architecture Overview
+<img src="./assets/architecture.png" alt="Architecture Diagram" width="700">
 
 시스템은 다음과 같은 컴포넌트로 구성됩니다:
 
